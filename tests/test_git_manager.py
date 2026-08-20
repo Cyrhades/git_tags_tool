@@ -98,6 +98,45 @@ def test_delete_local_tag():
         assert len(tags_after) == 0
 
 
+def test_delete_local_tags_batch():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _init_git_repo(tmpdir)
+
+        GitManager.create_tag(tmpdir, "v1.0.0", annotated=False)
+        GitManager.create_tag(tmpdir, "v1.1.0", annotated=False)
+        GitManager.create_tag(tmpdir, "v1.2.0", annotated=False)
+        assert len(GitManager.get_local_tags(tmpdir)) == 3
+
+        # Supprimer 2 tags d'un coup
+        GitManager.delete_local_tags(tmpdir, ["v1.0.0", "v1.2.0"])
+        remaining = [t.name for t in GitManager.get_local_tags(tmpdir)]
+        assert remaining == ["v1.1.0"]
+
+        # Appel avec liste vide ne doit rien faire
+        GitManager.delete_local_tags(tmpdir, [])
+        assert len(GitManager.get_local_tags(tmpdir)) == 1
+
+
+def test_delete_remote_tags_batch():
+    with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as remote_dir:
+        subprocess.run(["git", "init", "--bare"], cwd=remote_dir, check=True, capture_output=True)
+        _init_git_repo(local_dir)
+        subprocess.run(["git", "remote", "add", "origin", remote_dir], cwd=local_dir, check=True, capture_output=True)
+
+        GitManager.create_tag(local_dir, "v1.0.0")
+        GitManager.create_tag(local_dir, "v2.0.0")
+        GitManager.push_tag(local_dir, "v1.0.0")
+        GitManager.push_tag(local_dir, "v2.0.0")
+
+        rem_tags = GitManager.get_remote_tags(local_dir, remote="origin")
+        assert len(rem_tags) == 2
+
+        # Supprimer les deux tags à distance en une commande
+        GitManager.delete_remote_tags(local_dir, ["v1.0.0", "v2.0.0"], remote="origin")
+        rem_tags_after = GitManager.get_remote_tags(local_dir, remote="origin")
+        assert len(rem_tags_after) == 0
+
+
 def test_show_tag():
     with tempfile.TemporaryDirectory() as tmpdir:
         _init_git_repo(tmpdir)

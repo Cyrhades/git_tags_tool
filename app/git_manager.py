@@ -357,12 +357,27 @@ class GitManager:
     @classmethod
     def delete_local_tag(cls, repo_path: str, tag_name: str) -> None:
         """Supprime un tag localement."""
-        cls._run_git(["tag", "-d", tag_name], cwd=repo_path)
+        cls.delete_local_tags(repo_path, [tag_name])
+
+    @classmethod
+    def delete_local_tags(cls, repo_path: str, tag_names: List[str]) -> None:
+        """Supprime un ou plusieurs tags localement."""
+        if not tag_names:
+            return
+        cls._run_git(["tag", "-d"] + tag_names, cwd=repo_path)
 
     @classmethod
     def delete_remote_tag(cls, repo_path: str, tag_name: str, remote: str = "origin") -> None:
         """Supprime un tag sur le remote."""
-        cls._run_git(["push", remote, f":refs/tags/{tag_name}"], cwd=repo_path)
+        cls.delete_remote_tags(repo_path, [tag_name], remote=remote)
+
+    @classmethod
+    def delete_remote_tags(cls, repo_path: str, tag_names: List[str], remote: str = "origin") -> None:
+        """Supprime un ou plusieurs tags sur le remote."""
+        if not tag_names:
+            return
+        ref_specs = [f":refs/tags/{t}" for t in tag_names]
+        cls._run_git(["push", remote] + ref_specs, cwd=repo_path)
 
     @classmethod
     def show_tag(cls, repo_path: str, tag_name: str) -> str:

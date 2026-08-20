@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.dialogs import ConfirmDeleteDialog, CreateTagDialog, TagDetailsDialog
+from app.dialogs import ConfirmDeleteDialog, CreateTagDialog, DeleteTagsDialog, TagDetailsDialog
 from app.git_manager import GitError, GitManager
 from app.models import GitTag, RepositoryInfo, TagStatus
 from app.utils import DARK_STYLE_SHEET, STATUS_BG_COLORS, STATUS_COLORS, STATUS_ICONS, format_date_display
@@ -44,8 +44,8 @@ class MainWindow(QMainWindow):
     def __init__(self, initial_repo_path: Optional[str] = None):
         super().__init__()
         self.setWindowTitle("Git Tag Manager")
-        self.resize(1000, 700)
-        self.setMinimumSize(850, 550)
+        self.resize(1050, 720)
+        self.setMinimumSize(880, 550)
 
         self.current_repo_path: Optional[str] = None
         self.repo_info: Optional[RepositoryInfo] = None
@@ -123,6 +123,12 @@ class MainWindow(QMainWindow):
         ])
         self.status_filter_combo.currentTextChanged.connect(self._apply_filters)
 
+        self.btn_select_all = QPushButton("Tout cocher")
+        self.btn_select_all.clicked.connect(lambda: self._check_all_tags(True))
+
+        self.btn_deselect_all = QPushButton("Tout décocher")
+        self.btn_deselect_all.clicked.connect(lambda: self._check_all_tags(False))
+
         self.btn_fetch = QPushButton("Fetch Remote Tags")
         self.btn_fetch.clicked.connect(lambda: self._refresh_tags(do_fetch=True))
 
@@ -131,6 +137,8 @@ class MainWindow(QMainWindow):
 
         filter_layout.addWidget(self.search_input, stretch=2)
         filter_layout.addWidget(self.status_filter_combo, stretch=1)
+        filter_layout.addWidget(self.btn_select_all)
+        filter_layout.addWidget(self.btn_deselect_all)
         filter_layout.addWidget(self.btn_fetch)
         filter_layout.addWidget(self.btn_refresh)
 
@@ -138,9 +146,9 @@ class MainWindow(QMainWindow):
 
         # 3. Tableau des Tags
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
-            "Tag", "Local", "Remote", "Statut", "Commit", "Date / Sujet"
+            "☑", "Tag", "Local", "Remote", "Statut", "Commit", "Date / Sujet"
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -149,20 +157,23 @@ class MainWindow(QMainWindow):
         self.table.setSortingEnabled(True)
 
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 36)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        self.table.setColumnWidth(0, 180)
-        self.table.setColumnWidth(4, 120)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(1, 180)
+        self.table.setColumnWidth(5, 120)
 
-        # Signal de double clic et menu contextuel
+        # Signaux de table
         self.table.itemDoubleClicked.connect(self._on_table_double_click)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.itemSelectionChanged.connect(self._update_action_buttons_state)
+        self.table.itemChanged.connect(self._on_table_item_changed)
 
         main_layout.addWidget(self.table, stretch=3)
 
@@ -176,20 +187,16 @@ class MainWindow(QMainWindow):
         self.btn_push_tag = QPushButton("Push vers origin")
         self.btn_push_tag.clicked.connect(self._push_tag_action)
 
-        self.btn_delete_local = QPushButton("Supprimer local")
-        self.btn_delete_local.clicked.connect(self._delete_local_tag_action)
-
-        self.btn_delete_remote = QPushButton("Supprimer distant")
-        self.btn_delete_remote.setObjectName("DangerButton")
-        self.btn_delete_remote.clicked.connect(self._delete_remote_tag_action)
+        self.btn_delete_tags = QPushButton("Supprimer tag(s)")
+        self.btn_delete_tags.setObjectName("DangerButton")
+        self.btn_delete_tags.clicked.connect(self._delete_tags_action)
 
         self.btn_show_details = QPushButton("Afficher")
         self.btn_show_details.clicked.connect(self._show_details_action)
 
         action_layout.addWidget(self.btn_create_tag)
         action_layout.addWidget(self.btn_push_tag)
-        action_layout.addWidget(self.btn_delete_local)
-        action_layout.addWidget(self.btn_delete_remote)
+        action_layout.addWidget(self.btn_delete_tags)
         action_layout.addWidget(self.btn_show_details)
         action_layout.addStretch()
 
@@ -259,12 +266,13 @@ class MainWindow(QMainWindow):
         self.btn_change_repo.setEnabled(not busy)
         self.btn_fetch.setEnabled(not busy)
         self.btn_refresh.setEnabled(not busy)
+        self.btn_select_all.setEnabled(not busy)
+        self.btn_deselect_all.setEnabled(not busy)
         self.btn_create_tag.setEnabled(not busy and self.current_repo_path is not None)
 
         if busy:
             self.btn_push_tag.setEnabled(False)
-            self.btn_delete_local.setEnabled(False)
-            self.btn_delete_remote.setEnabled(False)
+            self.btn_delete_tags.setEnabled(False)
             self.btn_show_details.setEnabled(False)
             self.status_bar.showMessage(f"⟳ {status_msg}")
         else:
@@ -309,6 +317,7 @@ class MainWindow(QMainWindow):
 
     def _populate_table(self) -> None:
         """Remplit le tableau des tags avec filtrage et tri."""
+        self.table.blockSignals(True)
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
 
@@ -327,34 +336,41 @@ class MainWindow(QMainWindow):
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-            # Item Tag
+            # Item Checkbox (Col 0)
+            item_chk = QTableWidgetItem()
+            item_chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            item_chk.setCheckState(Qt.CheckState.Unchecked)
+            item_chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_chk.setData(Qt.ItemDataRole.UserRole, tag)
+
+            # Item Tag (Col 1)
             item_name = QTableWidgetItem(tag.name)
             item_name.setFont(QFont("Consolas", 10, QFont.Weight.Bold))
             item_name.setData(Qt.ItemDataRole.UserRole, tag)
 
-            # Item Local
+            # Item Local (Col 2)
             item_local = QTableWidgetItem("  ✓  " if tag.local else "  ✗  ")
             item_local.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item_local.setForeground(QColor("#2ecc71") if tag.local else QColor("#e74c3c"))
 
-            # Item Remote
+            # Item Remote (Col 3)
             item_remote = QTableWidgetItem("  ✓  " if tag.remote else "  ✗  ")
             item_remote.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item_remote.setForeground(QColor("#2ecc71") if tag.remote else QColor("#e74c3c"))
 
-            # Item Statut
+            # Item Statut (Col 4)
             status_text = f"{STATUS_ICONS.get(tag.status, '')} {tag.status.value}"
             item_status = QTableWidgetItem(status_text)
             item_status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item_status.setForeground(STATUS_COLORS.get(tag.status, QColor("#ffffff")))
             item_status.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
 
-            # Item Commit
+            # Item Commit (Col 5)
             item_commit = QTableWidgetItem(tag.display_commit)
             item_commit.setFont(QFont("Consolas", 9))
             item_commit.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            # Item Date / Sujet
+            # Item Date / Sujet (Col 6)
             meta = []
             if tag.date:
                 meta.append(format_date_display(tag.date))
@@ -362,84 +378,140 @@ class MainWindow(QMainWindow):
                 meta.append(tag.message)
             item_meta = QTableWidgetItem(" | ".join(meta) if meta else "-")
 
-            self.table.setItem(row, 0, item_name)
-            self.table.setItem(row, 1, item_local)
-            self.table.setItem(row, 2, item_remote)
-            self.table.setItem(row, 3, item_status)
-            self.table.setItem(row, 4, item_commit)
-            self.table.setItem(row, 5, item_meta)
+            self.table.setItem(row, 0, item_chk)
+            self.table.setItem(row, 1, item_name)
+            self.table.setItem(row, 2, item_local)
+            self.table.setItem(row, 3, item_remote)
+            self.table.setItem(row, 4, item_status)
+            self.table.setItem(row, 5, item_commit)
+            self.table.setItem(row, 6, item_meta)
 
         self.table.setSortingEnabled(True)
+        self.table.blockSignals(False)
+        self._update_action_buttons_state()
+
+    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        """Déclenché lorsqu'un élément du tableau change (ex: case à cocher)."""
+        if item.column() == 0:
+            self._update_action_buttons_state()
+
+    def _check_all_tags(self, checked: bool = True) -> None:
+        """Coche ou décoche toutes les lignes actuellement visibles du tableau."""
+        self.table.blockSignals(True)
+        target_state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item:
+                item.setCheckState(target_state)
+        self.table.blockSignals(False)
         self._update_action_buttons_state()
 
     def _apply_filters(self) -> None:
         """Déclenché lors du changement de texte dans la barre de recherche ou du filtre statut."""
         self._populate_table()
 
+    def _get_checked_tags(self) -> List[GitTag]:
+        """Retourne la liste des GitTag cochés dans le tableau."""
+        checked_tags = []
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                tag = item.data(Qt.ItemDataRole.UserRole)
+                if tag:
+                    checked_tags.append(tag)
+        return checked_tags
+
     def _get_selected_tag(self) -> Optional[GitTag]:
-        """Retourne l'objet GitTag sélectionné dans le tableau."""
+        """Retourne l'objet GitTag sélectionné (surbrillance) dans le tableau."""
         selected_items = self.table.selectedItems()
         if not selected_items:
             return None
         row = selected_items[0].row()
-        item_name = self.table.item(row, 0)
-        if item_name:
-            return item_name.data(Qt.ItemDataRole.UserRole)
+        item = self.table.item(row, 0) or self.table.item(row, 1)
+        if item:
+            return item.data(Qt.ItemDataRole.UserRole)
         return None
 
-    def _update_action_buttons_state(self) -> None:
-        """Active/Désactive les boutons selon l'état du tag sélectionné."""
-        tag = self._get_selected_tag()
-        has_repo = self.current_repo_path is not None
+    def _get_target_tags(self) -> List[GitTag]:
+        """
+        Retourne les tags cibles pour une action groupée :
+        priorité aux tags cochés, sinon le tag actuellement sélectionné dans le tableau.
+        """
+        checked = self._get_checked_tags()
+        if checked:
+            return checked
+        selected = self._get_selected_tag()
+        if selected:
+            return [selected]
+        return []
 
+    def _update_action_buttons_state(self) -> None:
+        """Active/Désactive les boutons selon l'état des tags cochés ou sélectionnés."""
+        has_repo = self.current_repo_path is not None
         self.btn_create_tag.setEnabled(has_repo)
 
-        if not tag:
-            self.btn_push_tag.setEnabled(False)
-            self.btn_delete_local.setEnabled(False)
-            self.btn_delete_remote.setEnabled(False)
-            self.btn_show_details.setEnabled(False)
-            return
+        target_tags = self._get_target_tags()
+        selected_tag = self._get_selected_tag()
 
-        self.btn_show_details.setEnabled(True)
-        self.btn_delete_local.setEnabled(tag.local)
-        self.btn_delete_remote.setEnabled(tag.remote)
+        has_targets = len(target_tags) > 0
+        has_local = any(t.local for t in target_tags)
+        has_remote = any(t.remote for t in target_tags)
 
-        # Le Push est activé dès que le tag est présent localement
-        self.btn_push_tag.setEnabled(has_repo and tag.local)
+        self.btn_delete_tags.setEnabled(has_repo and has_targets and (has_local or has_remote))
+        self.btn_push_tag.setEnabled(has_repo and has_targets and has_local)
+        self.btn_show_details.setEnabled(selected_tag is not None)
+
+        checked_count = len(self._get_checked_tags())
+        if checked_count > 1:
+            self.btn_delete_tags.setText(f"Supprimer ({checked_count}) tags")
+        elif checked_count == 1:
+            self.btn_delete_tags.setText("Supprimer (1) tag")
+        else:
+            self.btn_delete_tags.setText("Supprimer tag(s)")
 
     def _on_table_double_click(self, item: QTableWidgetItem) -> None:
         """Déclenche la vue détaillée au double-clic."""
         self._show_details_action()
 
     def _show_context_menu(self, position) -> None:
-        """Affiche le menu contextuel clic droit sur la ligne sélectionnée."""
-        tag = self._get_selected_tag()
+        """Affiche le menu contextuel clic droit."""
+        target_tags = self._get_target_tags()
+        selected_tag = self._get_selected_tag()
         menu = QMenu(self)
 
-        if tag:
-            action_show = QAction("Afficher les détails", self)
+        if selected_tag:
+            action_show = QAction(f"Afficher les détails de '{selected_tag.name}'", self)
             action_show.triggered.connect(self._show_details_action)
             menu.addAction(action_show)
-
             menu.addSeparator()
 
-            if tag.local:
-                action_push = QAction("Push vers origin", self)
+        if target_tags:
+            has_local = any(t.local for t in target_tags)
+            has_remote = any(t.remote for t in target_tags)
+            count = len(target_tags)
+            lbl_suffix = f" ({count} tags)" if count > 1 else f" '{target_tags[0].name}'"
+
+            if has_local:
+                action_push = QAction(f"Push vers origin{lbl_suffix}", self)
                 action_push.triggered.connect(self._push_tag_action)
                 menu.addAction(action_push)
 
-            if tag.local:
-                action_del_loc = QAction("Supprimer localement", self)
-                action_del_loc.triggered.connect(self._delete_local_tag_action)
-                menu.addAction(action_del_loc)
-
-            if tag.remote:
-                action_del_rem = QAction("Supprimer du remote (origin)", self)
-                action_del_rem.triggered.connect(self._delete_remote_tag_action)
-                menu.addAction(action_del_rem)
+            if has_local or has_remote:
+                action_del = QAction(f"Supprimer{lbl_suffix}...", self)
+                action_del.triggered.connect(self._delete_tags_action)
+                menu.addAction(action_del)
 
             menu.addSeparator()
+
+        action_chk_all = QAction("Tout cocher", self)
+        action_chk_all.triggered.connect(lambda: self._check_all_tags(True))
+        menu.addAction(action_chk_all)
+
+        action_unchk_all = QAction("Tout décocher", self)
+        action_unchk_all.triggered.connect(lambda: self._check_all_tags(False))
+        menu.addAction(action_unchk_all)
+
+        menu.addSeparator()
 
         action_refresh = QAction("Actualiser", self)
         action_refresh.triggered.connect(lambda: self._refresh_tags(do_fetch=False))
@@ -483,63 +555,85 @@ class MainWindow(QMainWindow):
             self._run_async_git_action("Création de tag", action, success_msg=f"✓ Tag '{tag_name}' créé avec succès.")
 
     def _push_tag_action(self) -> None:
-        """Pousse le tag sélectionné vers le remote."""
-        tag = self._get_selected_tag()
-        if not tag or not self.current_repo_path:
+        """Pousse les tags sélectionnés vers le remote."""
+        target_tags = self._get_target_tags()
+        local_targets = [t for t in target_tags if t.local]
+        if not local_targets or not self.current_repo_path:
             return
 
-        if tag.status == TagStatus.DIVERGENT:
+        divergent = [t for t in local_targets if t.status == TagStatus.DIVERGENT]
+        if divergent:
+            div_names = ", ".join([t.name for t in divergent])
             res = QMessageBox.warning(
                 self,
                 "Avertissement Divergence",
-                f"Le tag '{tag.name}' pointe vers des commits différents en local et sur le remote.\n\n"
-                f"Local: {tag.short_local_commit}\nRemote: {tag.short_remote_commit}\n\n"
+                f"Le(s) tag(s) suivant(s) pointe(nt) vers des commits différents en local et sur le remote :\n\n"
+                f"{div_names}\n\n"
                 "Voulez-vous forcer le push vers origin ?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if res != QMessageBox.StandardButton.Yes:
                 return
 
-        self.log(f"Push du tag '{tag.name}' vers origin...")
+        tag_names = [t.name for t in local_targets]
+        self.log(f"Push de {len(local_targets)} tag(s) vers origin : {', '.join(tag_names)}...")
 
         def action():
-            GitManager.push_tag(self.current_repo_path, tag.name, remote="origin")
-            return tag.name
+            for t in local_targets:
+                GitManager.push_tag(self.current_repo_path, t.name, remote="origin")
+            return len(local_targets)
 
-        self._run_async_git_action("Push tag", action, success_msg=f"✓ Tag '{tag.name}' envoyé vers origin.")
+        self._run_async_git_action(
+            "Push tag(s)",
+            action,
+            success_msg=f"✓ {len(local_targets)} tag(s) envoyé(s) vers origin avec succès.",
+        )
 
-    def _delete_local_tag_action(self) -> None:
-        """Supprime le tag sélectionné du dépôt local après confirmation."""
-        tag = self._get_selected_tag()
-        if not tag or not self.current_repo_path:
-            return
-
-        dlg = ConfirmDeleteDialog(tag.name, is_remote=False, parent=self)
-        if dlg.exec() == ConfirmDeleteDialog.DialogCode.Accepted:
-            self.log(f"Suppression locale du tag '{tag.name}'...")
-
-            def action():
-                GitManager.delete_local_tag(self.current_repo_path, tag.name)
-                return tag.name
-
-            self._run_async_git_action("Suppression local tag", action, success_msg=f"✓ Tag local '{tag.name}' supprimé.")
-
-    def _delete_remote_tag_action(self) -> None:
-        """Supprime le tag sélectionné du remote origin après confirmation renforcée."""
-        tag = self._get_selected_tag()
-        if not tag or not self.current_repo_path:
+    def _delete_tags_action(self) -> None:
+        """Supprime un ou plusieurs tags sélectionnés (localement et/ou à distance)."""
+        target_tags = self._get_target_tags()
+        if not target_tags or not self.current_repo_path:
             return
 
         remote_url = self.repo_info.remote_url if self.repo_info else None
-        dlg = ConfirmDeleteDialog(tag.name, is_remote=True, remote_url=remote_url, parent=self)
-        if dlg.exec() == ConfirmDeleteDialog.DialogCode.Accepted:
-            self.log(f"Suppression distante du tag '{tag.name}' sur origin...")
+        dlg = DeleteTagsDialog(target_tags, remote_url=remote_url, parent=self)
+        if dlg.exec() == DeleteTagsDialog.DialogCode.Accepted:
+            del_local, del_remote = dlg.get_options()
+            if not del_local and not del_remote:
+                return
+
+            local_tags_to_del = [t.name for t in target_tags if t.local] if del_local else []
+            remote_tags_to_del = [t.name for t in target_tags if t.remote] if del_remote else []
+
+            actions_desc = []
+            if local_tags_to_del:
+                actions_desc.append(f"{len(local_tags_to_del)} local(aux)")
+            if remote_tags_to_del:
+                actions_desc.append(f"{len(remote_tags_to_del)} distant(s)")
+            desc_str = " et ".join(actions_desc)
+
+            self.log(f"Suppression de {len(target_tags)} tag(s) ({desc_str})...")
 
             def action():
-                GitManager.delete_remote_tag(self.current_repo_path, tag.name, remote="origin")
-                return tag.name
+                if local_tags_to_del:
+                    GitManager.delete_local_tags(self.current_repo_path, local_tags_to_del)
+                if remote_tags_to_del:
+                    GitManager.delete_remote_tags(self.current_repo_path, remote_tags_to_del, remote="origin")
+                return len(target_tags)
 
-            self._run_async_git_action("Suppression remote tag", action, success_msg=f"✓ Tag distant '{tag.name}' supprimé de origin.")
+            self._run_async_git_action(
+                "Suppression de tag(s)",
+                action,
+                success_msg=f"✓ Suppression terminée avec succès ({desc_str}).",
+            )
+
+    def _delete_local_tag_action(self) -> None:
+        """Supprime le tag sélectionné du dépôt local."""
+        self._delete_tags_action()
+
+    def _delete_remote_tag_action(self) -> None:
+        """Supprime le tag sélectionné du remote origin."""
+        self._delete_tags_action()
 
     def _show_details_action(self) -> None:
         """Récupère la sortie de git show et l'affiche dans un dialogue dédié."""

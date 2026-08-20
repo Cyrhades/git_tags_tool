@@ -8,6 +8,7 @@ from PySide6.QtGui import QClipboard, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -288,6 +289,133 @@ class TagDetailsDialog(QDialog):
         clipboard.setText(self.git_show_output)
         self.btn_copy.setText("✓ Copié !")
         self.btn_copy.setEnabled(False)
+
+
+class DeleteTagsDialog(QDialog):
+    """Dialogue de confirmation pour la suppression d'un ou plusieurs tags avec sélection de la cible (local et/ou distant)."""
+
+    def __init__(
+        self,
+        tags: list[GitTag],
+        remote_url: Optional[str] = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.tags = tags
+        self.remote_url = remote_url
+
+        self.has_local_tags = any(t.local for t in self.tags)
+        self.has_remote_tags = any(t.remote for t in self.tags)
+
+        count = len(self.tags)
+        self.setWindowTitle(f"Supprimer {count} tag(s) Git" if count > 1 else f"Supprimer le tag {self.tags[0].name}")
+        self.setMinimumWidth(500)
+        self.setModal(True)
+
+        self._init_ui()
+
+    def _init_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+
+        count = len(self.tags)
+
+        # 1. En-tête
+        title_lbl = QLabel(f"Suppression de {count} tag(s)" if count > 1 else f"Suppression du tag : <b>{self.tags[0].name}</b>")
+        title_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #f3f4f6;")
+        layout.addWidget(title_lbl)
+
+        # 2. Liste récapitulative des tags sélectionnés
+        tags_frame = QFrame()
+        tags_frame.setStyleSheet(
+            "background-color: #16161e; border: 1px solid #383848; border-radius: 6px; padding: 6px;"
+        )
+        tags_layout = QVBoxLayout(tags_frame)
+        tags_layout.setContentsMargins(6, 6, 6, 6)
+        tags_layout.setSpacing(4)
+
+        if count <= 6:
+            for t in self.tags:
+                loc_txt = "Local: ✓" if t.local else "Local: ✗"
+                rem_txt = "Remote: ✓" if t.remote else "Remote: ✗"
+                t_lbl = QLabel(f"• <b>{t.name}</b> <span style='color: #9ca3af;'>({loc_txt}, {rem_txt})</span>")
+                tags_layout.addWidget(t_lbl)
+        else:
+            first_tags = [t.name for t in self.tags[:5]]
+            t_lbl = QLabel(f"• {', '.join(first_tags)} ... et {count - 5} autre(s)")
+            tags_layout.addWidget(t_lbl)
+
+        layout.addWidget(tags_frame)
+
+        # 3. Choix des cibles de suppression (Local et / ou Distant)
+        target_group_lbl = QLabel("Sélectionnez où supprimer le(s) tag(s) :")
+        target_group_lbl.setStyleSheet("font-weight: bold; color: #d1d5db; margin-top: 5px;")
+        layout.addWidget(target_group_lbl)
+
+        self.chk_delete_local = QCheckBox("Supprimer du dépôt local")
+        self.chk_delete_local.setEnabled(self.has_local_tags)
+        self.chk_delete_local.setChecked(self.has_local_tags)
+
+        self.chk_delete_remote = QCheckBox("Supprimer du dépôt distant (origin)")
+        self.chk_delete_remote.setEnabled(self.has_remote_tags)
+        self.chk_delete_remote.setChecked(False)
+
+        layout.addWidget(self.chk_delete_local)
+        layout.addWidget(self.chk_delete_remote)
+
+        # 4. Bannière d'avertissement pour le remote
+        self.warn_remote_frame = QFrame()
+        self.warn_remote_frame.setStyleSheet(
+            "background-color: rgba(239, 68, 68, 0.15); "
+            "border: 1px solid #ef4444; "
+            "border-radius: 6px; "
+            "padding: 8px;"
+        )
+        warn_remote_layout = QVBoxLayout(self.warn_remote_frame)
+        remote_info = f" ({self.remote_url})" if self.remote_url else ""
+        self.warn_remote_lbl = QLabel(
+            f"<b>⚠️ ATTENTION - Action irréversible :</b><br>"
+            f"La suppression sur le remote origin{remote_info} supprimera définitivement ces tags "
+            f"du serveur pour tous les collaborateurs."
+        )
+        self.warn_remote_lbl.setStyleSheet("color: #fca5a5; font-size: 12px;")
+        self.warn_remote_lbl.setWordWrap(True)
+        warn_remote_layout.addWidget(self.warn_remote_lbl)
+        self.warn_remote_frame.setVisible(False)
+        layout.addWidget(self.warn_remote_frame)
+
+        # Connecter les cases à cocher
+        self.chk_delete_local.toggled.connect(self._on_options_changed)
+        self.chk_delete_remote.toggled.connect(self._on_options_changed)
+
+        # 5. Boutons d'action
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        self.btn_cancel = QPushButton("Annuler")
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_delete = QPushButton("Supprimer")
+        self.btn_delete.setObjectName("DangerButton")
+        self.btn_delete.clicked.connect(self.accept)
+
+        btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_delete)
+        layout.addLayout(btn_layout)
+
+        self._on_options_changed()
+
+    def _on_options_changed(self) -> None:
+        """Met à jour l'avertissement distant et l'activation du bouton de confirmation."""
+        delete_local = self.chk_delete_local.isChecked()
+        delete_remote = self.chk_delete_remote.isChecked()
+
+        self.warn_remote_frame.setVisible(delete_remote)
+        self.btn_delete.setEnabled(delete_local or delete_remote)
+
+    def get_options(self) -> Tuple[bool, bool]:
+        """Retourne (delete_local, delete_remote)."""
+        return self.chk_delete_local.isChecked(), self.chk_delete_remote.isChecked()
 
 
 class ConfirmDeleteDialog(QDialog):
