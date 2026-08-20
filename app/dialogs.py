@@ -43,6 +43,9 @@ class CreateTagDialog(QDialog):
         self.existing_tags = existing_tags
         self.uncommitted_info = uncommitted_info
         self.remote_tag_hashes = remote_tag_hashes or {}
+        self.has_package_json = GitManager.has_package_json(self.repo_path)
+        self.current_pkg_version = GitManager.get_package_json_version(self.repo_path) if self.has_package_json else None
+        self.pkg_version_input: Optional[QLineEdit] = None
 
         self.setWindowTitle("Créer un tag Git")
         self.setMinimumWidth(480)
@@ -81,8 +84,14 @@ class CreateTagDialog(QDialog):
 
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("ex: v1.0.0, release-2.3")
-        self.name_input.textChanged.connect(self._validate_input)
         form.addRow("Nom du tag :", self.name_input)
+
+        if self.has_package_json:
+            self.pkg_version_input = QLineEdit()
+            self.pkg_version_input.setPlaceholderText("ex: 1.0.0")
+            if self.current_pkg_version is not None:
+                self.pkg_version_input.setText(self.current_pkg_version)
+            form.addRow("Version package.json :", self.pkg_version_input)
 
         # Message d'erreur dynamique
         self.error_label = QLabel("")
@@ -140,7 +149,21 @@ class CreateTagDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
+        # Connecteurs et pré-remplissage une fois tous les widgets initialisés
+        self.name_input.textChanged.connect(self._validate_input)
+        if self.has_package_json and self.pkg_version_input is not None:
+            self.pkg_version_input.textChanged.connect(self._on_pkg_version_changed)
+
+        if self.current_pkg_version:
+            default_tag_name = f"v{self.current_pkg_version}" if not self.current_pkg_version.startswith("v") else self.current_pkg_version
+            self.name_input.setText(default_tag_name)
+            self.name_input.selectAll()
+        else:
+            self._validate_input()
+
     def _validate_input(self) -> None:
+        if not hasattr(self, "error_label") or not hasattr(self, "btn_create"):
+            return
         tag_name = self.name_input.text().strip()
         if not tag_name:
             self.error_label.setText("")
@@ -172,12 +195,22 @@ class CreateTagDialog(QDialog):
             else:
                 self.warning_label.setText("")
 
-    def get_data(self) -> Tuple[str, bool, str]:
-        """Retourne (tag_name, is_annotated, message)."""
+    def _on_pkg_version_changed(self, new_val: str) -> None:
+        val = new_val.strip()
+        if val:
+            tag_name = f"v{val}" if not val.startswith("v") else val
+            current_tag = self.name_input.text().strip()
+            if not current_tag or current_tag.startswith("v"):
+                self.name_input.setText(tag_name)
+
+    def get_data(self) -> Tuple[str, bool, str, Optional[str]]:
+        """Retourne (tag_name, is_annotated, message, package_version)."""
+        pkg_ver = self.pkg_version_input.text().strip() if self.pkg_version_input else None
         return (
             self.name_input.text().strip(),
             self.radio_annotated.isChecked(),
             self.message_input.toPlainText().strip(),
+            pkg_ver,
         )
 
 

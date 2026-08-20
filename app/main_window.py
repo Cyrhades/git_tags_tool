@@ -466,7 +466,14 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         if dlg.exec() == CreateTagDialog.DialogCode.Accepted:
-            tag_name, annotated, message = dlg.get_data()
+            tag_name, annotated, message, pkg_version = dlg.get_data()
+            if pkg_version is not None:
+                updated = GitManager.update_package_json_version(self.current_repo_path, pkg_version)
+                if updated:
+                    self.log(f"Version mise à jour dans package.json : '{pkg_version}'")
+                else:
+                    self.log("⚠️ Échec de la mise à jour de la version dans package.json.")
+
             self.log(f"Création du tag '{tag_name}' (Annoté: {annotated})...")
 
             def action():

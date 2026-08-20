@@ -182,3 +182,35 @@ def test_has_uncommitted_changes():
         has_changes_after, desc = GitManager.has_uncommitted_changes(tmpdir)
         assert has_changes_after is True
         assert "1 fichier(s)" in desc
+
+
+def test_package_json_helpers():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 1. Aucun package.json
+        assert GitManager.has_package_json(tmpdir) is False
+        assert GitManager.get_package_json_version(tmpdir) is None
+        assert GitManager.update_package_json_version(tmpdir, "1.0.0") is False
+
+        # 2. Création d'un package.json avec version
+        pkg_file = Path(tmpdir) / "package.json"
+        pkg_file.write_text('{\n  "name": "my-project",\n  "version": "1.2.3"\n}\n', encoding="utf-8")
+
+        assert GitManager.has_package_json(tmpdir) is True
+        assert GitManager.get_package_json_version(tmpdir) == "1.2.3"
+
+        # 3. Mise à jour de la version
+        success = GitManager.update_package_json_version(tmpdir, "2.0.0")
+        assert success is True
+        assert GitManager.get_package_json_version(tmpdir) == "2.0.0"
+
+        # Vérifier que les autres champs sont préservés
+        content = pkg_file.read_text(encoding="utf-8")
+        assert '"name": "my-project"' in content
+        assert '"version": "2.0.0"' in content
+
+        # 4. package.json invalide
+        pkg_file.write_text("invalid json content", encoding="utf-8")
+        assert GitManager.has_package_json(tmpdir) is True
+        assert GitManager.get_package_json_version(tmpdir) is None
+        assert GitManager.update_package_json_version(tmpdir, "2.0.0") is False
+

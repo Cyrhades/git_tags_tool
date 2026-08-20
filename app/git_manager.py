@@ -2,6 +2,7 @@
 Gestionnaire des opérations Git via subprocess.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -368,3 +369,78 @@ class GitManager:
         """Retourne les informations détaillées fournies par git show <tag_name>."""
         res = cls._run_git(["show", tag_name], cwd=repo_path)
         return res.stdout
+
+    @staticmethod
+    def get_package_json_path(repo_path: str) -> Path:
+        """Retourne le chemin vers package.json à la racine du dépôt."""
+        return Path(repo_path) / "package.json"
+
+    @classmethod
+    def has_package_json(cls, repo_path: str) -> bool:
+        """Indique si un fichier package.json existe à la racine du dépôt."""
+        pkg_path = cls.get_package_json_path(repo_path)
+        return pkg_path.is_file()
+
+    @classmethod
+    def get_package_json_version(cls, repo_path: str) -> Optional[str]:
+        """
+        Lit le fichier package.json et extrait la valeur du champ 'version'.
+        Retourne None si le fichier n'existe pas ou n'est pas un JSON valide.
+        """
+        pkg_path = cls.get_package_json_path(repo_path)
+        if not pkg_path.is_file():
+            return None
+        try:
+            with open(pkg_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                version = data.get("version")
+                return str(version) if version is not None else ""
+        except Exception:
+            return None
+        return None
+
+    @classmethod
+    def update_package_json_version(cls, repo_path: str, new_version: str) -> bool:
+        """
+        Met à jour le champ 'version' dans package.json en préservant le formatage/l'indentation.
+        Retourne True si la mise à jour a réussi, False sinon.
+        """
+        pkg_path = cls.get_package_json_path(repo_path)
+        if not pkg_path.is_file():
+            return False
+        try:
+            with open(pkg_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            # Détecter le saut de ligne
+            newline = "\r\n" if "\r\n" in content else "\n"
+
+            # Détecter l'indentation
+            indent: int | str = 2
+            for line in content.splitlines():
+                if line.startswith("\t"):
+                    indent = "\t"
+                    break
+                elif line.startswith("    "):
+                    indent = 4
+                    break
+                elif line.startswith("  "):
+                    indent = 2
+                    break
+
+            data = json.loads(content)
+            if not isinstance(data, dict):
+                return False
+
+            data["version"] = new_version
+
+            formatted = json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
+            if newline == "\r\n":
+                formatted = formatted.replace("\n", "\r\n")
+
+            with open(pkg_path, "w", encoding="utf-8", newline="") as f:
+                f.write(formatted)
+            return True
+        except Exception:
+            return False
